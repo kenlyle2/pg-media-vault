@@ -16,7 +16,7 @@ jobs:
 
       - name: Build zip
         run: |
-          cd mu-plugins
+          cd plugins
           zip -r ../postglider-adapter.zip postglider-adapter/
 
       - name: Create GitHub Release
