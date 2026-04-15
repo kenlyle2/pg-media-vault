@@ -21,17 +21,30 @@ The function uses the existing `user_images` RLS — no additional database chan
 Run this in the Supabase SQL editor or as a migration:
 
 ```sql
-ALTER TABLE user_images
-  ADD COLUMN IF NOT EXISTS search_tsv tsvector
-    GENERATED ALWAYS AS (
-      to_tsvector('english',
-        array_to_string(tags, ' ') || ' ' || coalesce(description, '')
-      )
-    ) STORED;
+ALTER TABLE user_images ADD COLUMN IF NOT EXISTS search_tsv tsvector;
+
+UPDATE user_images
+SET search_tsv = to_tsvector('english'::regconfig,
+  array_to_string(tags, ' ') || ' ' || coalesce(description, ''));
+
+CREATE OR REPLACE FUNCTION update_user_images_search_tsv()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.search_tsv := to_tsvector('english'::regconfig,
+    array_to_string(NEW.tags, ' ') || ' ' || coalesce(NEW.description, ''));
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER tg_user_images_search_tsv
+  BEFORE INSERT OR UPDATE OF tags, description
+  ON user_images
+  FOR EACH ROW EXECUTE FUNCTION update_user_images_search_tsv();
 
 CREATE INDEX IF NOT EXISTS idx_user_images_search_tsv
   ON user_images USING gin(search_tsv);
 ```
+Note: uses a trigger rather than `GENERATED ALWAYS` because `array_to_string` is STABLE, not IMMUTABLE.
 
 ## 3. Install the adapter
 
