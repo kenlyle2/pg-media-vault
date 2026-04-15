@@ -1,12 +1,14 @@
 <?php
 /**
- * Plugin Name: PostGlider Gallery Adapter
- * Description: Connects SearchIQ to your PostGlider AI-tagged image library via Supabase.
- * Version:     0.1.0
- * Author:      PostGlider
- * License:     Proprietary
- *
- * Drop into wp-content/mu-plugins/ — no activation required.
+ * Plugin Name:       PostGlider Gallery Adapter
+ * Plugin URI:        https://postglider.com
+ * Description:       Connects your PostGlider AI-tagged Media Vault to WordPress via a searchable REST endpoint.
+ * Version:           0.1.0
+ * Author:            PostGlider
+ * Author URI:        https://postglider.com
+ * License:           Proprietary
+ * Text Domain:       postglider-adapter
+ * Network:           true
  */
 
 if ( ! defined( 'ABSPATH' ) ) exit;
