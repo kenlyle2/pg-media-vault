@@ -1,0 +1,302 @@
+<?php
+/**
+ * PostGlider Adapter — One-time installer
+ *
+ * Upload this file to your WordPress root (same folder as wp-config.php),
+ * then visit https://mypostglider.website/pg-install.php in a browser.
+ * It will create the plugin files and then DELETE ITSELF.
+ *
+ * DO NOT leave this file on the server. It self-deletes on success,
+ * but if something goes wrong remove it manually.
+ */
+
+// Basic protection — only run from a browser, not a bot
+if ( php_sapi_name() === 'cli' ) {
+    exit( 'Run from a browser.' );
+}
+
+$plugin_dir = __DIR__ . '/wp-content/plugins/postglider-adapter';
+$includes   = $plugin_dir . '/includes';
+
+$files = [];
+
+// ── postglider-adapter.php ────────────────────────────────────────────────────
+$files[ $plugin_dir . '/postglider-adapter.php' ] = <<<'PHP'
+<?php
+/**
+ * Plugin Name:       PostGlider Gallery Adapter
+ * Plugin URI:        https://postglider.com
+ * Description:       Connects your PostGlider AI-tagged Media Vault to WordPress via a searchable REST endpoint.
+ * Version:           0.1.0
+ * Author:            PostGlider
+ * Author URI:        https://postglider.com
+ * License:           Proprietary
+ * Text Domain:       postglider-adapter
+ */
+
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/search.php';
+require_once __DIR__ . '/includes/admin-settings.php';
+require_once __DIR__ . '/includes/network-api.php';
+PHP;
+
+// ── includes/auth.php ─────────────────────────────────────────────────────────
+$files[ $includes . '/auth.php' ] = <<<'PHP'
+<?php
+/**
+ * PostGlider Adapter — Auth / option helpers
+ * Multisite-aware: each subsite stores its own gallery token.
+ */
+
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+function pg_get_option( string $key ) {
+    $prefixed = 'postglider_' . $key;
+    if ( is_multisite() ) {
+        return get_blog_option( get_current_blog_id(), $prefixed, false );
+    }
+    return get_option( $prefixed, false );
+}
+
+function pg_set_option( string $key, $value ): bool {
+    $prefixed = 'postglider_' . $key;
+    if ( is_multisite() ) {
+        return update_blog_option( get_current_blog_id(), $prefixed, $value );
+    }
+    return update_option( $prefixed, $value );
+}
+PHP;
+
+// ── includes/search.php ───────────────────────────────────────────────────────
+$files[ $includes . '/search.php' ] = <<<'PHP'
+<?php
+/**
+ * PostGlider Adapter — Search handler
+ * Proxies /wp-json/postglider/v1/search to the PostGlider gallery-search edge function.
+ */
+
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+function pg_register_search_route() {
+    register_rest_route( 'postglider/v1', '/search', [
+        'methods'             => 'GET',
+        'callback'            => 'pg_search_handler',
+        'permission_callback' => '__return_true',
+        'args'                => [
+            'q' => [
+                'required'          => true,
+                'type'              => 'string',
+                'sanitize_callback' => 'sanitize_text_field',
+                'validate_callback' => function( $val ) {
+                    return is_string( $val ) && strlen( $val ) > 0 && strlen( $val ) <= 200;
+                },
+            ],
+            'limit' => [
+                'required'          => false,
+                'type'              => 'integer',
+                'default'           => 24,
+                'sanitize_callback' => 'absint',
+            ],
+        ],
+    ] );
+}
+add_action( 'rest_api_init', 'pg_register_search_route' );
+
+function pg_search_handler( WP_REST_Request $request ) {
+    $q     = $request->get_param( 'q' );
+    $limit = min( max( 1, (int) $request->get_param( 'limit' ) ), 100 );
+
+    $supabase_url  = pg_get_option( 'supabase_url' );
+    $gallery_token = pg_get_option( 'gallery_token' );
+
+    if ( ! $supabase_url || ! $gallery_token ) {
+        return new WP_Error( 'pg_not_configured', 'PostGlider adapter not configured.', [ 'status' => 503 ] );
+    }
+
+    $endpoint = trailingslashit( $supabase_url ) . 'functions/v1/gallery-search';
+
+    $response = wp_remote_post( $endpoint, [
+        'timeout' => 10,
+        'headers' => [
+            'X-Gallery-Token' => $gallery_token,
+            'Content-Type'    => 'application/json',
+        ],
+        'body' => wp_json_encode( [ 'q' => $q, 'limit' => $limit ] ),
+    ] );
+
+    if ( is_wp_error( $response ) ) {
+        return new WP_Error( 'pg_upstream_error', $response->get_error_message(), [ 'status' => 502 ] );
+    }
+
+    $code = wp_remote_retrieve_response_code( $response );
+    $body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+    if ( $code !== 200 ) {
+        return new WP_Error( 'pg_upstream_error', $body['error'] ?? 'Upstream error', [ 'status' => $code ] );
+    }
+
+    $images  = $body['images'] ?? [];
+    $results = array_map( function( $img ) {
+        $tag_label = implode( ', ', array_slice( $img['tags'] ?? [], 0, 6 ) );
+        return [
+            'title'       => $tag_label ?: 'Image',
+            'description' => $img['description'] ?? '',
+            'image'       => $img['public_url'],
+            'url'         => $img['public_url'],
+            'id'          => $img['id'],
+        ];
+    }, $images );
+
+    return rest_ensure_response( $results );
+}
+PHP;
+
+// ── includes/admin-settings.php ───────────────────────────────────────────────
+$files[ $includes . '/admin-settings.php' ] = <<<'PHP'
+<?php
+/**
+ * PostGlider Adapter — Admin settings page
+ */
+
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+function pg_admin_menu() {
+    add_options_page(
+        'PostGlider Gallery',
+        'PostGlider',
+        'manage_options',
+        'postglider-settings',
+        'pg_settings_page'
+    );
+}
+add_action( 'admin_menu', 'pg_admin_menu' );
+
+function pg_settings_page() {
+    if ( ! current_user_can( 'manage_options' ) ) return;
+
+    if ( isset( $_POST['pg_save'] ) && check_admin_referer( 'pg_settings' ) ) {
+        pg_set_option( 'supabase_url',  sanitize_url( $_POST['pg_supabase_url'] ?? '' ) );
+        pg_set_option( 'gallery_token', sanitize_text_field( $_POST['pg_gallery_token'] ?? '' ) );
+        echo '<div class="updated"><p>Settings saved.</p></div>';
+    }
+
+    $url   = esc_attr( pg_get_option( 'supabase_url' ) ?: '' );
+    $token = esc_attr( pg_get_option( 'gallery_token' ) ?: '' );
+    ?>
+    <div class="wrap">
+        <h1>PostGlider Gallery Settings</h1>
+        <form method="post">
+            <?php wp_nonce_field( 'pg_settings' ); ?>
+            <table class="form-table">
+                <tr>
+                    <th><label for="pg_supabase_url">Supabase Project URL</label></th>
+                    <td>
+                        <input name="pg_supabase_url" id="pg_supabase_url" type="url"
+                               class="regular-text" value="<?php echo $url; ?>"
+                               placeholder="https://xxxx.supabase.co" />
+                    </td>
+                </tr>
+                <tr>
+                    <th><label for="pg_gallery_token">Gallery Token</label></th>
+                    <td>
+                        <input name="pg_gallery_token" id="pg_gallery_token" type="password"
+                               class="large-text" value="<?php echo $token; ?>" />
+                        <p class="description">Gallery token from PostGlider Settings.</p>
+                    </td>
+                </tr>
+            </table>
+            <p><strong>Search endpoint:</strong><br>
+               <code><?php echo esc_url( rest_url( 'postglider/v1/search' ) ); ?></code></p>
+            <?php submit_button( 'Save Settings', 'primary', 'pg_save' ); ?>
+        </form>
+    </div>
+    <?php
+}
+PHP;
+
+// ── includes/network-api.php ──────────────────────────────────────────────────
+$files[ $includes . '/network-api.php' ] = <<<'PHP'
+<?php
+/**
+ * PostGlider Adapter — Network configuration REST endpoint
+ * POST /wp-json/postglider/v1/configure-site  (super admin only)
+ */
+
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+add_action( 'rest_api_init', function () {
+    register_rest_route( 'postglider/v1', '/configure-site', [
+        'methods'             => 'POST',
+        'callback'            => 'pg_configure_site_handler',
+        'permission_callback' => function () {
+            return current_user_can( 'manage_network' );
+        },
+        'args' => [
+            'blog_id'       => [ 'required' => true,  'type' => 'integer', 'sanitize_callback' => 'absint' ],
+            'supabase_url'  => [ 'required' => true,  'type' => 'string',  'sanitize_callback' => 'sanitize_url' ],
+            'gallery_token' => [ 'required' => true,  'type' => 'string',  'sanitize_callback' => 'sanitize_text_field' ],
+        ],
+    ] );
+} );
+
+function pg_configure_site_handler( WP_REST_Request $request ) {
+    $blog_id = $request->get_param( 'blog_id' );
+    if ( ! get_blog_details( $blog_id ) ) {
+        return new WP_Error( 'pg_invalid_blog', 'Blog not found.', [ 'status' => 404 ] );
+    }
+    update_blog_option( $blog_id, 'postglider_supabase_url',  $request->get_param( 'supabase_url' ) );
+    update_blog_option( $blog_id, 'postglider_gallery_token', $request->get_param( 'gallery_token' ) );
+    return rest_ensure_response( [ 'ok' => true, 'blog_id' => $blog_id ] );
+}
+PHP;
+
+// ── Write files ───────────────────────────────────────────────────────────────
+$errors = [];
+
+foreach ( [ $plugin_dir, $includes ] as $dir ) {
+    if ( ! is_dir( $dir ) && ! mkdir( $dir, 0755, true ) ) {
+        $errors[] = "Could not create directory: $dir";
+    }
+}
+
+if ( empty( $errors ) ) {
+    foreach ( $files as $path => $content ) {
+        if ( file_put_contents( $path, $content ) === false ) {
+            $errors[] = "Could not write: $path";
+        }
+    }
+}
+
+// ── Report & self-destruct ────────────────────────────────────────────────────
+header( 'Content-Type: text/html; charset=utf-8' );
+?><!DOCTYPE html>
+<html>
+<head><title>PostGlider Installer</title>
+<style>body{font-family:sans-serif;max-width:600px;margin:60px auto;padding:0 20px}
+.ok{color:#2d6a2d;background:#eaf7ea;padding:16px;border-radius:6px}
+.err{color:#7a1c1c;background:#fdecea;padding:16px;border-radius:6px}
+code{display:block;margin-top:10px;font-size:13px;word-break:break-all}</style>
+</head><body>
+<?php if ( empty( $errors ) ) :
+    @unlink( __FILE__ ); // self-delete ?>
+    <div class="ok">
+        <strong>✓ PostGlider Adapter installed successfully.</strong>
+        <p>The plugin files are in <code>wp-content/plugins/postglider-adapter/</code></p>
+        <p>Next steps:</p>
+        <ol>
+            <li>Go to <strong>Network Admin → Plugins</strong></li>
+            <li>Find <em>PostGlider Gallery Adapter</em> and click <strong>Network Activate</strong></li>
+        </ol>
+        <p><em>This installer file has been deleted.</em></p>
+    </div>
+<?php else : ?>
+    <div class="err">
+        <strong>✗ Installation failed:</strong>
+        <ul><?php foreach ( $errors as $e ) echo '<li>' . htmlspecialchars( $e ) . '</li>'; ?></ul>
+        <p>Check directory permissions on <code>wp-content/plugins/</code> and try again.<br>
+        <strong>Delete this file manually if it persists.</strong></p>
+    </div>
+<?php endif; ?>
+</body></html>
