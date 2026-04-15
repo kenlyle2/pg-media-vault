@@ -38,10 +38,10 @@ function pg_search_handler( WP_REST_Request $request ) {
     $q     = $request->get_param( 'q' );
     $limit = min( max( 1, (int) $request->get_param( 'limit' ) ), 100 );
 
-    $supabase_url = pg_get_option( 'supabase_url' );
-    $jwt          = pg_get_option( 'supabase_jwt' );
+    $supabase_url  = pg_get_option( 'supabase_url' );
+    $gallery_token = pg_get_option( 'gallery_token' );
 
-    if ( ! $supabase_url || ! $jwt ) {
+    if ( ! $supabase_url || ! $gallery_token ) {
         return new WP_Error( 'pg_not_configured', 'PostGlider adapter not configured.', [ 'status' => 503 ] );
     }
 
@@ -50,8 +50,8 @@ function pg_search_handler( WP_REST_Request $request ) {
     $response = wp_remote_post( $endpoint, [
         'timeout' => 10,
         'headers' => [
-            'Authorization' => 'Bearer ' . $jwt,
-            'Content-Type'  => 'application/json',
+            'X-Gallery-Token' => $gallery_token,
+            'Content-Type'    => 'application/json',
         ],
         'body' => wp_json_encode( [ 'q' => $q, 'limit' => $limit ] ),
     ] );

@@ -23,13 +23,13 @@ function pg_settings_page() {
     if ( ! current_user_can( 'manage_options' ) ) return;
 
     if ( isset( $_POST['pg_save'] ) && check_admin_referer( 'pg_settings' ) ) {
-        pg_set_option( 'supabase_url', sanitize_url( $_POST['pg_supabase_url'] ?? '' ) );
-        pg_set_option( 'supabase_jwt', sanitize_text_field( $_POST['pg_supabase_jwt'] ?? '' ) );
+        pg_set_option( 'supabase_url',    sanitize_url( $_POST['pg_supabase_url'] ?? '' ) );
+        pg_set_option( 'gallery_token',   sanitize_text_field( $_POST['pg_gallery_token'] ?? '' ) );
         echo '<div class="updated"><p>Settings saved.</p></div>';
     }
 
-    $url = esc_attr( pg_get_option( 'supabase_url' ) ?: '' );
-    $jwt = esc_attr( pg_get_option( 'supabase_jwt' ) ?: '' );
+    $url   = esc_attr( pg_get_option( 'supabase_url' ) ?: '' );
+    $token = esc_attr( pg_get_option( 'gallery_token' ) ?: '' );
     ?>
     <div class="wrap">
         <h1>PostGlider Gallery Settings</h1>
@@ -46,11 +46,11 @@ function pg_settings_page() {
                     </td>
                 </tr>
                 <tr>
-                    <th><label for="pg_supabase_jwt">Client JWT</label></th>
+                    <th><label for="pg_gallery_token">Gallery Token</label></th>
                     <td>
-                        <input name="pg_supabase_jwt" id="pg_supabase_jwt" type="password"
-                               class="large-text" value="<?php echo $jwt; ?>" />
-                        <p class="description">Long-lived JWT issued from your PostGlider account. Scopes search to your images only.</p>
+                        <input name="pg_gallery_token" id="pg_gallery_token" type="password"
+                               class="large-text" value="<?php echo $token; ?>" />
+                        <p class="description">Gallery token from PostGlider Settings. Scopes search to this account's Media Vault.</p>
                     </td>
                 </tr>
             </table>

@@ -7,9 +7,9 @@
  * scoped to that client's PostGlider account.
  *
  * Usage:
- *   pg_get_option( 'supabase_url' )  → string|false
- *   pg_get_option( 'supabase_jwt' )  → string|false
- *   pg_set_option( 'supabase_jwt', $token )
+ *   pg_get_option( 'supabase_url' )    → string|false
+ *   pg_get_option( 'gallery_token' )  → string|false
+ *   pg_set_option( 'gallery_token', $token )
  */
 
 if ( ! defined( 'ABSPATH' ) ) exit;

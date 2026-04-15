@@ -14,3 +14,4 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/search.php';
 require_once __DIR__ . '/includes/admin-settings.php';
+require_once __DIR__ . '/includes/network-api.php';
