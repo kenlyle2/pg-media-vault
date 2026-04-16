@@ -11,7 +11,7 @@
 if ( ! defined( 'ABSPATH' ) ) exit;
 
 define( 'POSTGLIDER_ADAPTER_METADATA_URL',
-    'https://raw.githubusercontent.com/kenlyle2/postglider-wp/main/metadata.json'
+    'https://raw.githubusercontent.com/kenlyle2/pg-media-vault/main/metadata.json'
 );
 
 add_filter( 'pre_set_site_transient_update_plugins', 'pg_check_for_update' );
@@ -29,7 +29,7 @@ function pg_check_for_update( $transient ) {
             'slug'         => 'postglider-adapter',
             'plugin'       => $plugin_file,
             'new_version'  => $metadata->version,
-            'url'          => 'https://github.com/kenlyle2/postglider-wp',
+            'url'          => 'https://github.com/kenlyle2/pg-media-vault',
             'package'      => $metadata->download_url,
             'requires'     => $metadata->requires      ?? '6.0',
             'requires_php' => $metadata->requires_php  ?? '8.0',
