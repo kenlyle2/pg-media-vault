@@ -56,10 +56,12 @@ function pg_configure_site_handler( WP_REST_Request $request ) {
     update_blog_option( $blog_id, 'postglider_supabase_url',  $supabase_url );
     update_blog_option( $blog_id, 'postglider_gallery_token', $gallery_token );
 
-    // anon key is network-wide — store once, used by all subsites
+    // anon key + supabase URL are network-wide — stored once, used by all
+    // subsites and by the main-site auth-session endpoint.
     $anon_key = $request->get_param( 'anon_key' );
     if ( $anon_key ) {
-        update_site_option( 'postglider_anon_key', $anon_key );
+        update_site_option( 'postglider_anon_key',     $anon_key );
+        update_site_option( 'postglider_supabase_url', $supabase_url );
     }
 
     return rest_ensure_response( [
