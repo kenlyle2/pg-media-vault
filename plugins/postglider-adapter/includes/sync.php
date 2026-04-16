@@ -129,6 +129,9 @@ function pg_sync_image_handler( WP_REST_Request $request ) {
         wp_set_post_tags( $post_id, $tags, false );
     }
 
+    // Store Supabase URL in post meta — used by the featured image faking filter in cpt.php
+    update_post_meta( $post_id, '_pg_image_url', $public_url );
+
     return rest_ensure_response( [
         'ok'       => true,
         'post_id'  => $post_id,
