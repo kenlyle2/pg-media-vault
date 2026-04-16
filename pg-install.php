@@ -26,7 +26,7 @@ $files[ $plugin_dir . '/postglider-adapter.php' ] = <<<'PHP'
  * Plugin Name:       PostGlider Gallery Adapter
  * Plugin URI:        https://postglider.com
  * Description:       Connects your PostGlider AI-tagged Media Vault to WordPress via a searchable REST endpoint.
- * Version:           0.2.1
+ * Version:           0.2.2
  * Author:            PostGlider
  * Author URI:        https://postglider.com
  * License:           GPL-2.0-or-later
@@ -38,11 +38,13 @@ $files[ $plugin_dir . '/postglider-adapter.php' ] = <<<'PHP'
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'POSTGLIDER_ADAPTER_VERSION', '0.2.1' );
+define( 'POSTGLIDER_ADAPTER_VERSION', '0.2.2' );
 define( 'POSTGLIDER_ADAPTER_DIR', plugin_dir_path( __FILE__ ) );
 
 require_once POSTGLIDER_ADAPTER_DIR . 'includes/auth.php';
+require_once POSTGLIDER_ADAPTER_DIR . 'includes/cpt.php';
 require_once POSTGLIDER_ADAPTER_DIR . 'includes/search.php';
+require_once POSTGLIDER_ADAPTER_DIR . 'includes/sync.php';
 require_once POSTGLIDER_ADAPTER_DIR . 'includes/admin-settings.php';
 require_once POSTGLIDER_ADAPTER_DIR . 'includes/network-api.php';
 require_once POSTGLIDER_ADAPTER_DIR . 'includes/updater.php';
@@ -73,6 +75,49 @@ function pg_set_option( string $key, $value ): bool {
     }
     return update_option( $prefixed, $value );
 }
+PHP;
+
+// ── includes/cpt.php ──────────────────────────────────────────────────────────
+$files[ $includes . '/cpt.php' ] = <<<'PHP'
+<?php
+/**
+ * PostGlider Adapter — pg_gallery_image Custom Post Type
+ *
+ * Each stub represents one AI-tagged image in PostGlider's Media Vault.
+ * Structure:
+ *   title   = tags joined with " · "
+ *   content = <img> block + description paragraph
+ *   excerpt = description
+ *   tags    = each AI tag as a WP post_tag term (for SearchIQ facets)
+ *
+ * Images never leave Supabase Storage. SearchIQ indexes these stubs.
+ */
+
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+add_action( 'init', function () {
+
+    register_post_type( 'pg_gallery_image', [
+        'labels' => [
+            'name'          => esc_html__( 'Gallery Images',       'postglider-adapter' ),
+            'singular_name' => esc_html__( 'Gallery Image',        'postglider-adapter' ),
+            'search_items'  => esc_html__( 'Search Gallery Images', 'postglider-adapter' ),
+            'not_found'     => esc_html__( 'No gallery images.',    'postglider-adapter' ),
+        ],
+        'public'            => true,
+        'has_archive'       => false,
+        'show_in_rest'      => true,   // REST API + Gutenberg access
+        'show_in_nav_menus' => false,
+        'show_in_admin_bar' => false,
+        'show_ui'           => false,  // hidden from admin menu — managed via sync
+        'supports'          => [ 'title', 'editor', 'excerpt' ],
+        'taxonomies'        => [ 'post_tag' ],
+        'rewrite'           => [ 'slug' => 'gallery-image', 'with_front' => false ],
+        'capability_type'   => 'post',
+        'map_meta_cap'      => true,
+    ] );
+
+} );
 PHP;
 
 // ── includes/search.php ───────────────────────────────────────────────────────
@@ -159,6 +204,106 @@ function pg_search_handler( WP_REST_Request $request ) {
     }, $images );
 
     return rest_ensure_response( $results );
+}
+PHP;
+
+// ── includes/sync.php ─────────────────────────────────────────────────────────
+$files[ $includes . '/sync.php' ] = <<<'PHP'
+<?php
+/**
+ * PostGlider Adapter — Image sync endpoint
+ *
+ * POST /wp-json/postglider/v1/sync-image
+ * Auth: X-Gallery-Token header (must match stored postglider_gallery_token)
+ *
+ * Creates or updates a pg_gallery_image stub post for one Media Vault image.
+ * Called server-side by PostGlider after every successful tag.
+ * Idempotent — uses a deterministic post slug derived from image_id.
+ */
+
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+add_action( 'rest_api_init', function () {
+    register_rest_route( 'postglider/v1', '/sync-image', [
+        'methods'             => 'POST',
+        'callback'            => 'pg_sync_image_handler',
+        'permission_callback' => 'pg_sync_image_auth',
+        'args' => [
+            'image_id'    => [ 'required' => true,  'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
+            'public_url'  => [ 'required' => true,  'type' => 'string', 'sanitize_callback' => 'sanitize_url' ],
+            'tags'        => [ 'required' => false, 'type' => 'array',  'default' => [], 'items' => [ 'type' => 'string' ] ],
+            'description' => [ 'required' => false, 'type' => 'string', 'default' => '', 'sanitize_callback' => 'sanitize_text_field' ],
+        ],
+    ] );
+} );
+
+function pg_sync_image_auth( WP_REST_Request $request ): bool {
+    $provided = $request->get_header( 'X-Gallery-Token' );
+    $stored   = pg_get_option( 'gallery_token' );
+    if ( ! $provided || ! $stored ) return false;
+    return hash_equals( (string) $stored, (string) $provided );
+}
+
+function pg_sync_image_handler( WP_REST_Request $request ) {
+    $image_id    = $request->get_param( 'image_id' );
+    $public_url  = $request->get_param( 'public_url' );
+    $tags        = array_values( array_filter( array_map(
+        'sanitize_text_field', (array) $request->get_param( 'tags' )
+    ) ) );
+    $description = (string) $request->get_param( 'description' );
+
+    $title_tags = array_map( 'ucwords', array_slice( $tags, 0, 8 ) );
+    $title      = $title_tags ? implode( ' · ', $title_tags ) : 'Gallery Image';
+
+    $img_url = esc_url( $public_url );
+    $img_alt = esc_attr( $title );
+    $content = "<img src=\"{$img_url}\" alt=\"{$img_alt}\" loading=\"lazy\">";
+    if ( $description ) {
+        $content .= "\n<p>" . esc_html( $description ) . '</p>';
+    }
+
+    $post_slug = 'pg-img-' . substr( preg_replace( '/[^a-z0-9]/', '-', strtolower( $image_id ) ), 0, 36 );
+
+    $existing_ids = get_posts( [
+        'name'           => $post_slug,
+        'post_type'      => 'pg_gallery_image',
+        'post_status'    => 'any',
+        'posts_per_page' => 1,
+        'fields'         => 'ids',
+    ] );
+
+    $post_data = [
+        'post_type'    => 'pg_gallery_image',
+        'post_name'    => $post_slug,
+        'post_title'   => $title,
+        'post_content' => $content,
+        'post_excerpt' => $description,
+        'post_status'  => 'publish',
+    ];
+
+    $is_new = empty( $existing_ids );
+
+    if ( ! $is_new ) {
+        $post_data['ID'] = $existing_ids[0];
+        $post_id = wp_update_post( $post_data, true );
+    } else {
+        $post_id = wp_insert_post( $post_data, true );
+    }
+
+    if ( is_wp_error( $post_id ) ) {
+        return new WP_Error( 'pg_sync_failed', $post_id->get_error_message(), [ 'status' => 500 ] );
+    }
+
+    if ( $tags ) {
+        wp_set_post_tags( $post_id, $tags, false );
+    }
+
+    return rest_ensure_response( [
+        'ok'       => true,
+        'post_id'  => $post_id,
+        'created'  => $is_new,
+        'image_id' => $image_id,
+    ] );
 }
 PHP;
 
@@ -366,17 +511,17 @@ code{display:block;margin-top:10px;font-size:13px;word-break:break-all}</style>
 <?php if ( empty( $errors ) ) :
     @unlink( __FILE__ ); ?>
     <div class="ok">
-        <strong>✓ PostGlider Adapter v0.2.1 installed successfully.</strong>
+        <strong>&#10003; PostGlider Adapter v0.2.2 installed successfully.</strong>
         <p>Plugin files written to <code>wp-content/plugins/postglider-adapter/</code></p>
         <ol>
-            <li>Go to <strong>Network Admin → Plugins</strong></li>
+            <li>Go to <strong>Network Admin &rarr; Plugins</strong></li>
             <li>Find <em>PostGlider Gallery Adapter</em> and click <strong>Network Activate</strong></li>
         </ol>
         <p><em>This installer file has been deleted.</em></p>
     </div>
 <?php else : ?>
     <div class="err">
-        <strong>✗ Installation failed:</strong>
+        <strong>&#10007; Installation failed:</strong>
         <ul><?php foreach ( $errors as $e ) echo '<li>' . htmlspecialchars( $e ) . '</li>'; ?></ul>
         <p>Check directory permissions on <code>wp-content/plugins/</code>.<br>
         <strong>Delete this file manually if it persists.</strong></p>
