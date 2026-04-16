@@ -26,7 +26,7 @@ $files[ $plugin_dir . '/postglider-adapter.php' ] = <<<'PHP'
  * Plugin Name:       PostGlider Gallery Adapter
  * Plugin URI:        https://postglider.com
  * Description:       Connects your PostGlider AI-tagged Media Vault to WordPress via a searchable REST endpoint.
- * Version:           0.2.6
+ * Version:           0.2.7
  * Author:            PostGlider
  * Author URI:        https://postglider.com
  * License:           GPL-2.0-or-later
@@ -38,7 +38,7 @@ $files[ $plugin_dir . '/postglider-adapter.php' ] = <<<'PHP'
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'POSTGLIDER_ADAPTER_VERSION', '0.2.6' );
+define( 'POSTGLIDER_ADAPTER_VERSION', '0.2.7' );
 define( 'POSTGLIDER_ADAPTER_DIR', plugin_dir_path( __FILE__ ) );
 
 require_once POSTGLIDER_ADAPTER_DIR . 'includes/auth.php';
@@ -121,6 +121,50 @@ add_action( 'init', function () {
         update_option( 'pg_rewrite_version', POSTGLIDER_ADAPTER_VERSION );
     }
 }, 99 );
+
+add_filter( 'rest_prepare_pg_gallery_image', function ( $response, $post, $request ) {
+    $image_url = get_post_meta( $post->ID, '_pg_image_url', true );
+    if ( ! $image_url ) return $response;
+    $data = $response->get_data();
+    $data['featured_media']         = 0;
+    $data['jetpack_featured_media_url'] = $image_url;
+    $data['featured_image_url']     = $image_url;
+    $data['thumbnail_url']          = $image_url;
+    $data['_links']['wp:featuredmedia'] = [];
+    if ( isset( $data['_embedded'] ) ) {
+        $data['_embedded']['wp:featuredmedia'] = [ [
+            'id'            => $post->ID,
+            'source_url'    => $image_url,
+            'media_details' => [
+                'sizes' => [
+                    'full'      => [ 'source_url' => $image_url ],
+                    'large'     => [ 'source_url' => $image_url ],
+                    'medium'    => [ 'source_url' => $image_url ],
+                    'thumbnail' => [ 'source_url' => $image_url ],
+                ],
+            ],
+        ] ];
+    }
+    $response->set_data( $data );
+    return $response;
+}, 10, 3 );
+
+add_action( 'init', function () {
+    register_post_meta( 'pg_gallery_image', '_pg_image_url', [
+        'show_in_rest'  => true,
+        'single'        => true,
+        'type'          => 'string',
+        'auth_callback' => '__return_false',
+    ] );
+} );
+
+add_action( 'wp_head', function () {
+    if ( ! is_singular( 'pg_gallery_image' ) ) return;
+    $image_url = get_post_meta( get_the_ID(), '_pg_image_url', true );
+    if ( ! $image_url ) return;
+    echo '<meta property="og:image" content="' . esc_url( $image_url ) . '">' . "\n";
+    echo '<meta name="thumbnail" content="' . esc_url( $image_url ) . '">' . "\n";
+}, 5 );
 
 add_filter( 'get_post_metadata', function ( $value, $object_id, $meta_key, $single ) {
     if ( $meta_key !== '_thumbnail_id' ) return $value;
@@ -536,7 +580,7 @@ code{display:block;margin-top:10px;font-size:13px;word-break:break-all}</style>
 <?php if ( empty( $errors ) ) :
     @unlink( __FILE__ ); ?>
     <div class="ok">
-        <strong>&#10003; PostGlider Adapter v0.2.6 installed successfully.</strong>
+        <strong>&#10003; PostGlider Adapter v0.2.7 installed successfully.</strong>
         <p>Plugin files written to <code>wp-content/plugins/postglider-adapter/</code></p>
         <ol>
             <li>Go to <strong>Network Admin &rarr; Plugins</strong></li>

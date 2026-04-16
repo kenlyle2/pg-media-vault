@@ -58,6 +58,72 @@ add_action( 'init', function () {
 }, 99 );
 
 /**
+ * Expose _pg_image_url in the REST API response under every field name that
+ * common search plugins (SearchIQ, Relevanssi, Jetpack Search) look for.
+ * Also corrects featured_media to 0 so the REST API doesn't try to resolve
+ * our fake negative attachment ID as an embed.
+ */
+add_filter( 'rest_prepare_pg_gallery_image', function ( $response, $post, $request ) {
+    $image_url = get_post_meta( $post->ID, '_pg_image_url', true );
+    if ( ! $image_url ) return $response;
+
+    $data = $response->get_data();
+
+    // Set featured_media to 0 so WP doesn't try to embed a fake attachment
+    $data['featured_media'] = 0;
+
+    // Field names used by various search indexers
+    $data['jetpack_featured_media_url'] = $image_url;   // Jetpack + many plugins
+    $data['featured_image_url']         = $image_url;   // generic fallback
+    $data['thumbnail_url']              = $image_url;   // SearchIQ-specific
+
+    // Inject a minimal wp:featuredmedia embed so ?_embed=1 resolves correctly
+    $data['_links']['wp:featuredmedia'] = [];
+    if ( isset( $data['_embedded'] ) ) {
+        $data['_embedded']['wp:featuredmedia'] = [ [
+            'id'           => $post->ID,
+            'source_url'   => $image_url,
+            'media_details' => [
+                'sizes' => [
+                    'full'      => [ 'source_url' => $image_url ],
+                    'large'     => [ 'source_url' => $image_url ],
+                    'medium'    => [ 'source_url' => $image_url ],
+                    'thumbnail' => [ 'source_url' => $image_url ],
+                ],
+            ],
+        ] ];
+    }
+
+    $response->set_data( $data );
+    return $response;
+}, 10, 3 );
+
+/**
+ * Register _pg_image_url as a publicly readable REST meta field.
+ * SearchIQ and other indexers can read this directly as post.meta._pg_image_url.
+ */
+add_action( 'init', function () {
+    register_post_meta( 'pg_gallery_image', '_pg_image_url', [
+        'show_in_rest'  => true,
+        'single'        => true,
+        'type'          => 'string',
+        'auth_callback' => '__return_false',
+    ] );
+} );
+
+/**
+ * Inject og:image into the <head> of individual stub pages.
+ * Catches any crawler that reads HTML rather than the REST API.
+ */
+add_action( 'wp_head', function () {
+    if ( ! is_singular( 'pg_gallery_image' ) ) return;
+    $image_url = get_post_meta( get_the_ID(), '_pg_image_url', true );
+    if ( ! $image_url ) return;
+    echo '<meta property="og:image" content="' . esc_url( $image_url ) . '">' . "\n";
+    echo '<meta name="thumbnail" content="' . esc_url( $image_url ) . '">' . "\n";
+}, 5 );
+
+/**
  * Fake _thumbnail_id for pg_gallery_image posts.
  * Returns -$post_id as a stand-in so has_post_thumbnail() and
  * get_the_post_thumbnail_url() see a truthy value without a real attachment.
