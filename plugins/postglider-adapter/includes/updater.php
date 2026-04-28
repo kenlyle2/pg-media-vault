@@ -3,9 +3,8 @@
  * PostGlider Adapter — Auto-updater
  *
  * Hooks into WordPress's native plugin update mechanism.
- * metadata.json is fetched on every update check — WP itself rate-limits
- * these to once per 12 hours, so no separate transient is needed.
- * "Check Again" in Network Admin → Updates always picks up new versions.
+ * Metadata is cached in a site transient (1 hour) to avoid hammering GitHub.
+ * "Check Again" in Network Admin → Updates clears the cache and forces a fresh fetch.
  */
 
 if ( ! defined( 'ABSPATH' ) ) exit;
@@ -13,6 +12,13 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 define( 'POSTGLIDER_ADAPTER_METADATA_URL',
     'https://raw.githubusercontent.com/kenlyle2/pg-media-vault/main/metadata.json'
 );
+
+define( 'POSTGLIDER_ADAPTER_METADATA_TRANSIENT', 'pg_adapter_metadata_cache' );
+
+// Clear our metadata cache whenever WordPress flushes the plugin update cache.
+add_action( 'wp_clean_plugins_cache', function () {
+    delete_site_transient( POSTGLIDER_ADAPTER_METADATA_TRANSIENT );
+} );
 
 add_filter( 'pre_set_site_transient_update_plugins', 'pg_check_for_update' );
 
@@ -35,6 +41,8 @@ function pg_check_for_update( $transient ) {
             'requires_php' => $metadata->requires_php  ?? '8.0',
             'sections'     => (array) ( $metadata->sections ?? new stdClass() ),
         ];
+        // Remove from no_update so the notification is never suppressed.
+        unset( $transient->no_update[ $plugin_file ] );
     }
 
     return $transient;
@@ -59,11 +67,26 @@ function pg_plugin_info( $result, $action, $args ) {
 }
 
 function pg_fetch_metadata(): ?stdClass {
+    $cached = get_site_transient( POSTGLIDER_ADAPTER_METADATA_TRANSIENT );
+    if ( $cached !== false ) return $cached ?: null;
+
     $response = wp_remote_get( POSTGLIDER_ADAPTER_METADATA_URL, [
         'timeout'    => 10,
         'user-agent' => 'PostGlider/' . POSTGLIDER_ADAPTER_VERSION . '; ' . get_bloginfo( 'url' ),
     ] );
-    if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) return null;
+
+    if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
+        // Cache the failure briefly so we don't hammer GitHub on every page load.
+        set_site_transient( POSTGLIDER_ADAPTER_METADATA_TRANSIENT, null, 5 * MINUTE_IN_SECONDS );
+        return null;
+    }
+
     $data = json_decode( wp_remote_retrieve_body( $response ) );
-    return $data ?: null;
+    if ( ! $data ) {
+        set_site_transient( POSTGLIDER_ADAPTER_METADATA_TRANSIENT, null, 5 * MINUTE_IN_SECONDS );
+        return null;
+    }
+
+    set_site_transient( POSTGLIDER_ADAPTER_METADATA_TRANSIENT, $data, HOUR_IN_SECONDS );
+    return $data;
 }
