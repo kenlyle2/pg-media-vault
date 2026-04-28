@@ -92,6 +92,14 @@ function pg_create_site_handler( WP_REST_Request $request ) {
         return new WP_Error( 'pg_create_site_failed', $blog_id->get_error_message(), [ 'status' => 500 ] );
     }
 
+    // Ensure every super admin can see the new site in their My Sites list.
+    foreach ( get_super_admins() as $login ) {
+        $user = get_user_by( 'login', $login );
+        if ( $user && ! is_user_member_of_blog( $user->ID, $blog_id ) ) {
+            add_user_to_blog( $blog_id, $user->ID, 'administrator' );
+        }
+    }
+
     return rest_ensure_response( [ 'ok' => true, 'blog_id' => (int) $blog_id ] );
 }
 
