@@ -86,7 +86,7 @@ function pg_create_site_handler( WP_REST_Request $request ) {
         return rest_ensure_response( [ 'ok' => true, 'blog_id' => (int) $existing_id, 'existing' => true ] );
     }
 
-    $blog_id = wpmu_create_blog( $domain, $path, $title, get_current_user_id() );
+    $blog_id = wpmu_create_blog( $domain, $path, $title, get_current_user_id(), [ 'public' => 1 ] );
 
     if ( is_wp_error( $blog_id ) ) {
         return new WP_Error( 'pg_create_site_failed', $blog_id->get_error_message(), [ 'status' => 500 ] );
