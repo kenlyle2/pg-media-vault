@@ -13,6 +13,37 @@
 if ( ! defined( 'ABSPATH' ) ) exit;
 
 add_action( 'rest_api_init', function () {
+    /**
+     * POST /wp-json/postglider/v1/create-site
+     * Creates a new subsite on the multisite network.
+     * Idempotent — returns the existing blog_id if the domain already exists.
+     */
+    register_rest_route( 'postglider/v1', '/create-site', [
+        'methods'             => 'POST',
+        'callback'            => 'pg_create_site_handler',
+        'permission_callback' => function () {
+            return current_user_can( 'manage_network' );
+        },
+        'args' => [
+            'domain' => [
+                'required'          => true,
+                'type'              => 'string',
+                'sanitize_callback' => 'sanitize_text_field',
+            ],
+            'title' => [
+                'required'          => true,
+                'type'              => 'string',
+                'sanitize_callback' => 'sanitize_text_field',
+            ],
+            'path' => [
+                'required'          => false,
+                'type'              => 'string',
+                'sanitize_callback' => 'sanitize_text_field',
+                'default'           => '/',
+            ],
+        ],
+    ] );
+
     register_rest_route( 'postglider/v1', '/configure-site', [
         'methods'             => 'POST',
         'callback'            => 'pg_configure_site_handler',
@@ -43,6 +74,26 @@ add_action( 'rest_api_init', function () {
         ],
     ] );
 } );
+
+function pg_create_site_handler( WP_REST_Request $request ) {
+    $domain = $request->get_param( 'domain' );
+    $title  = $request->get_param( 'title' );
+    $path   = $request->get_param( 'path' ) ?: '/';
+
+    // Idempotent — return existing blog_id if domain already provisioned
+    $existing_id = get_blog_id_from_url( $domain, $path );
+    if ( $existing_id ) {
+        return rest_ensure_response( [ 'ok' => true, 'blog_id' => (int) $existing_id, 'existing' => true ] );
+    }
+
+    $blog_id = wpmu_create_blog( $domain, $path, $title, get_current_user_id() );
+
+    if ( is_wp_error( $blog_id ) ) {
+        return new WP_Error( 'pg_create_site_failed', $blog_id->get_error_message(), [ 'status' => 500 ] );
+    }
+
+    return rest_ensure_response( [ 'ok' => true, 'blog_id' => (int) $blog_id ] );
+}
 
 function pg_configure_site_handler( WP_REST_Request $request ) {
     $blog_id       = $request->get_param( 'blog_id' );
