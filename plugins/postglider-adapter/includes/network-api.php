@@ -115,8 +115,77 @@ function pg_configure_site_handler( WP_REST_Request $request ) {
         update_site_option( 'postglider_supabase_url', $supabase_url );
     }
 
+    pg_setup_gallery_page( $blog_id );
+
     return rest_ensure_response( [
         'ok'      => true,
         'blog_id' => $blog_id,
     ] );
+}
+
+/**
+ * Creates a published Gallery page with [pg_gallery] shortcode and wires it
+ * into the primary nav menu on the given subsite.  Idempotent — skips if the
+ * page already exists (identified by _pg_gallery_page meta).
+ */
+function pg_setup_gallery_page( int $blog_id ): void {
+    switch_to_blog( $blog_id );
+
+    $existing = get_posts( [
+        'post_type'      => 'page',
+        'post_status'    => 'publish',
+        'meta_key'       => '_pg_gallery_page',
+        'meta_value'     => '1',
+        'fields'         => 'ids',
+        'posts_per_page' => 1,
+    ] );
+
+    if ( ! empty( $existing ) ) {
+        restore_current_blog();
+        return;
+    }
+
+    $page_id = wp_insert_post( [
+        'post_type'    => 'page',
+        'post_title'   => 'Gallery',
+        'post_name'    => 'gallery',
+        'post_content' => '[pg_gallery]',
+        'post_status'  => 'publish',
+    ] );
+
+    if ( ! $page_id || is_wp_error( $page_id ) ) {
+        restore_current_blog();
+        return;
+    }
+
+    update_post_meta( $page_id, '_pg_gallery_page', '1' );
+
+    // Create or reuse a nav menu named "Main Menu"
+    $menu_name = 'Main Menu';
+    $menu_id   = wp_create_nav_menu( $menu_name );
+    if ( is_wp_error( $menu_id ) ) {
+        $obj     = wp_get_nav_menu_object( $menu_name );
+        $menu_id = $obj ? (int) $obj->term_id : 0;
+    }
+
+    if ( $menu_id ) {
+        wp_update_nav_menu_item( $menu_id, 0, [
+            'menu-item-title'     => 'Gallery',
+            'menu-item-object'    => 'page',
+            'menu-item-object-id' => $page_id,
+            'menu-item-type'      => 'post_type',
+            'menu-item-status'    => 'publish',
+        ] );
+
+        // Assign to every unoccupied theme nav location
+        $locations = get_theme_mod( 'nav_menu_locations', [] );
+        foreach ( array_keys( (array) get_registered_nav_menus() ) as $location ) {
+            if ( empty( $locations[ $location ] ) ) {
+                $locations[ $location ] = $menu_id;
+            }
+        }
+        set_theme_mod( 'nav_menu_locations', $locations );
+    }
+
+    restore_current_blog();
 }
