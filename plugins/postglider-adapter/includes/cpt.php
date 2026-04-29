@@ -89,8 +89,10 @@ add_action( 'init', function () {
 /**
  * Expose _pg_image_url in the REST API response under every field name that
  * common search plugins (SearchIQ, Relevanssi, Jetpack Search) look for.
- * Also corrects featured_media to 0 so the REST API doesn't try to resolve
- * our fake negative attachment ID as an embed.
+ *
+ * featured_media is left as the post's own ID (set by the _thumbnail_id filter below).
+ * SearchIQ sees a non-zero featured_media, fetches /wp/v2/media/{id}, and the
+ * rest_pre_dispatch filter below intercepts that request and returns the image data.
  */
 add_filter( 'rest_prepare_pg_gallery_image', function ( $response, $post, $request ) {
     $image_url = get_post_meta( $post->ID, '_pg_image_url', true );
@@ -98,33 +100,74 @@ add_filter( 'rest_prepare_pg_gallery_image', function ( $response, $post, $reque
 
     $data = $response->get_data();
 
-    // Set featured_media to 0 so WP doesn't try to embed a fake attachment
-    $data['featured_media'] = 0;
-
     // Field names used by various search indexers
     $data['jetpack_featured_media_url'] = $image_url;   // Jetpack + many plugins
     $data['featured_image_url']         = $image_url;   // generic fallback
     $data['thumbnail_url']              = $image_url;   // SearchIQ-specific
 
-    // Inject a minimal wp:featuredmedia embed so ?_embed=1 resolves correctly
-    $data['_links']['wp:featuredmedia'] = [];
-    if ( isset( $data['_embedded'] ) ) {
-        $data['_embedded']['wp:featuredmedia'] = [ [
-            'id'           => $post->ID,
-            'source_url'   => $image_url,
-            'media_details' => [
-                'sizes' => [
-                    'full'      => [ 'source_url' => $image_url ],
-                    'large'     => [ 'source_url' => $image_url ],
-                    'medium'    => [ 'source_url' => $image_url ],
-                    'thumbnail' => [ 'source_url' => $image_url ],
-                ],
+    // Inject a proper wp:featuredmedia link so ?_embed=1 resolves via our media intercept
+    $data['_links']['wp:featuredmedia'] = [ [
+        'href'       => rest_url( "wp/v2/media/{$post->ID}" ),
+        'embeddable' => true,
+    ] ];
+    $embed_payload = [
+        'id'            => $post->ID,
+        'source_url'    => $image_url,
+        'media_type'    => 'image',
+        'mime_type'     => 'image/jpeg',
+        'alt_text'      => get_the_title( $post->ID ),
+        'media_details' => [
+            'sizes' => [
+                'full'      => [ 'source_url' => $image_url ],
+                'large'     => [ 'source_url' => $image_url ],
+                'medium'    => [ 'source_url' => $image_url ],
+                'thumbnail' => [ 'source_url' => $image_url ],
             ],
-        ] ];
+        ],
+    ];
+    if ( isset( $data['_embedded'] ) ) {
+        $data['_embedded']['wp:featuredmedia'] = [ $embed_payload ];
     }
 
     $response->set_data( $data );
     return $response;
+}, 10, 3 );
+
+/**
+ * Intercept WP REST API media requests for pg_gallery_image post IDs.
+ *
+ * SearchIQ crawls /wp/v2/media/{featured_media} to resolve thumbnails.
+ * Our stubs use the post's own ID as the featured_media value, which isn't a real
+ * attachment. This filter returns a synthetic media response before WP's media
+ * controller can return a 404.
+ */
+add_filter( 'rest_pre_dispatch', function ( $result, $server, $request ) {
+    if ( $result !== null ) return $result; // another filter already handled it
+
+    $route = $request->get_route();
+    if ( ! preg_match( '#^/wp/v2/media/(\d+)$#', $route, $m ) ) return $result;
+
+    $post_id = (int) $m[1];
+    if ( get_post_type( $post_id ) !== 'pg_gallery_image' ) return $result;
+
+    $image_url = get_post_meta( $post_id, '_pg_image_url', true );
+    if ( ! $image_url ) return $result;
+
+    return new WP_REST_Response( [
+        'id'            => $post_id,
+        'source_url'    => $image_url,
+        'media_type'    => 'image',
+        'mime_type'     => 'image/jpeg',
+        'alt_text'      => get_the_title( $post_id ),
+        'media_details' => [
+            'sizes' => [
+                'full'      => [ 'source_url' => $image_url ],
+                'large'     => [ 'source_url' => $image_url ],
+                'medium'    => [ 'source_url' => $image_url ],
+                'thumbnail' => [ 'source_url' => $image_url ],
+            ],
+        ],
+    ], 200 );
 }, 10, 3 );
 
 /**
@@ -154,8 +197,11 @@ add_action( 'wp_head', function () {
 
 /**
  * Fake _thumbnail_id for pg_gallery_image posts.
- * Returns -$post_id as a stand-in so has_post_thumbnail() and
- * get_the_post_thumbnail_url() see a truthy value without a real attachment.
+ * Returns the post's own ID as a stand-in so has_post_thumbnail() and
+ * get_the_post_thumbnail_url() see a truthy positive integer. This means
+ * featured_media in the REST API is also a non-zero positive integer, which
+ * SearchIQ uses as a signal that an image exists. The rest_pre_dispatch filter
+ * above intercepts the resulting /wp/v2/media/{id} crawl and returns the real URL.
  * Only fires when _pg_image_url meta is present (set during sync).
  */
 add_filter( 'get_post_metadata', function ( $value, $object_id, $meta_key, $single ) {
@@ -163,18 +209,16 @@ add_filter( 'get_post_metadata', function ( $value, $object_id, $meta_key, $sing
     if ( get_post_type( $object_id ) !== 'pg_gallery_image' ) return $value;
     $image_url = get_post_meta( $object_id, '_pg_image_url', true );
     if ( ! $image_url ) return $value;
-    return $single ? -$object_id : [ -$object_id ];
+    return $single ? $object_id : [ $object_id ];
 }, 10, 4 );
 
 /**
  * Map the stand-in attachment ID back to the real Supabase URL.
- * Intercepts wp_get_attachment_image_src() for negative IDs we created above.
+ * Intercepts wp_get_attachment_image_src() for IDs that belong to pg_gallery_image posts.
  */
 add_filter( 'wp_get_attachment_image_src', function ( $image, $attachment_id, $size, $icon ) {
-    if ( $attachment_id >= 0 ) return $image;
-    $post_id = -$attachment_id;
-    if ( get_post_type( $post_id ) !== 'pg_gallery_image' ) return $image;
-    $url = get_post_meta( $post_id, '_pg_image_url', true );
+    if ( get_post_type( $attachment_id ) !== 'pg_gallery_image' ) return $image;
+    $url = get_post_meta( $attachment_id, '_pg_image_url', true );
     if ( ! $url ) return $image;
     return [ esc_url_raw( $url ), 800, 600, false ];
 }, 10, 4 );
