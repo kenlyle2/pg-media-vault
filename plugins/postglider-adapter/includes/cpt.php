@@ -100,36 +100,23 @@ add_filter( 'rest_prepare_pg_gallery_image', function ( $response, $post, $reque
 
     $data = $response->get_data();
 
-    // Field names used by various search indexers
-    $data['jetpack_featured_media_url'] = $image_url;   // Jetpack + many plugins
-    $data['featured_image_url']         = $image_url;   // generic fallback
-    $data['thumbnail_url']              = $image_url;   // SearchIQ-specific
-
-    // Inject a proper wp:featuredmedia link so ?_embed=1 resolves via our media intercept
-    $data['_links']['wp:featuredmedia'] = [ [
-        'href'       => rest_url( "wp/v2/media/{$post->ID}" ),
-        'embeddable' => true,
-    ] ];
-    $embed_payload = [
-        'id'            => $post->ID,
-        'source_url'    => $image_url,
-        'media_type'    => 'image',
-        'mime_type'     => 'image/jpeg',
-        'alt_text'      => get_the_title( $post->ID ),
-        'media_details' => [
-            'sizes' => [
-                'full'      => [ 'source_url' => $image_url ],
-                'large'     => [ 'source_url' => $image_url ],
-                'medium'    => [ 'source_url' => $image_url ],
-                'thumbnail' => [ 'source_url' => $image_url ],
-            ],
-        ],
-    ];
-    if ( isset( $data['_embedded'] ) ) {
-        $data['_embedded']['wp:featuredmedia'] = [ $embed_payload ];
-    }
-
+    // Flat URL fields for indexers that read these directly (SearchIQ, Jetpack, etc.)
+    $data['jetpack_featured_media_url'] = $image_url;
+    $data['featured_image_url']         = $image_url;
+    $data['thumbnail_url']              = $image_url;
+    $data['source_url']                 = $image_url;
     $response->set_data( $data );
+
+    // WP_REST_Response keeps links in a separate property — $data['_links'] is ignored.
+    // Replace the auto-generated wp:featuredmedia link (which points to pg_gallery_image/N)
+    // with one pointing to wp/v2/media/N so our rest_pre_dispatch intercept fires on _embed.
+    $response->remove_link( 'https://api.w.org/featuredmedia' );
+    $response->add_link(
+        'https://api.w.org/featuredmedia',
+        rest_url( "wp/v2/media/{$post->ID}" ),
+        [ 'embeddable' => true ]
+    );
+
     return $response;
 }, 10, 3 );
 
