@@ -20,11 +20,12 @@ add_action( 'wp_clean_plugins_cache', function () {
     delete_site_transient( POSTGLIDER_ADAPTER_METADATA_TRANSIENT );
 } );
 
-// Also clear on "Check Again" — force-check=1 is added to the URL by the Updates page.
+// Clear on "Check Again" — force-check=1 is appended by the Updates page.
+// Network admin uses manage_network_plugins, not update_plugins.
 add_action( 'admin_init', function () {
-    if ( ! empty( $_GET['force-check'] ) && current_user_can( 'update_plugins' ) ) {
-        delete_site_transient( POSTGLIDER_ADAPTER_METADATA_TRANSIENT );
-    }
+    if ( empty( $_GET['force-check'] ) ) return;
+    if ( ! current_user_can( 'update_plugins' ) && ! current_user_can( 'manage_network_plugins' ) ) return;
+    delete_site_transient( POSTGLIDER_ADAPTER_METADATA_TRANSIENT );
 } );
 
 add_filter( 'pre_set_site_transient_update_plugins', 'pg_check_for_update' );
