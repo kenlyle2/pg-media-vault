@@ -209,3 +209,39 @@ add_filter( 'wp_get_attachment_image_src', function ( $image, $attachment_id, $s
     if ( ! $url ) return $image;
     return [ esc_url_raw( $url ), 800, 600, false ];
 }, 10, 4 );
+
+/**
+ * Intercepts wp_get_attachment_url() for pg_gallery_image post IDs.
+ * SearchIQ may call this after resolving _thumbnail_id from wp_postmeta.
+ */
+add_filter( 'wp_get_attachment_url', function ( $url, $attachment_id ) {
+    if ( get_post_type( $attachment_id ) !== 'pg_gallery_image' ) return $url;
+    $image_url = get_post_meta( $attachment_id, '_pg_image_url', true );
+    return $image_url ? esc_url_raw( $image_url ) : $url;
+}, 10, 2 );
+
+/**
+ * One-time backfill: write _thumbnail_id = post_id to wp_postmeta for every
+ * pg_gallery_image post that has _pg_image_url but is missing _thumbnail_id.
+ * Runs once per plugin version. Needed so SearchIQ's direct SQL queries find
+ * the thumbnail ID for posts that were synced before 0.4.2.
+ */
+add_action( 'init', function () {
+    $backfill_version = '0.4.2';
+    if ( get_option( 'pg_thumbnail_backfill_version' ) === $backfill_version ) return;
+
+    global $wpdb;
+    $post_ids = $wpdb->get_col( $wpdb->prepare(
+        "SELECT p.ID FROM {$wpdb->posts} p
+         INNER JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID AND pm.meta_key = '_pg_image_url'
+         LEFT JOIN {$wpdb->postmeta} pt ON pt.post_id = p.ID AND pt.meta_key = '_thumbnail_id'
+         WHERE p.post_type = %s AND p.post_status != 'trash' AND pt.meta_id IS NULL",
+        'pg_gallery_image'
+    ) );
+
+    foreach ( $post_ids as $post_id ) {
+        update_post_meta( (int) $post_id, '_thumbnail_id', (int) $post_id );
+    }
+
+    update_option( 'pg_thumbnail_backfill_version', $backfill_version );
+}, 20 );

@@ -156,6 +156,12 @@ function pg_sync_image_handler( WP_REST_Request $request ) {
     // Store Supabase URL in post meta — used by the featured image faking filter in cpt.php
     update_post_meta( $post_id, '_pg_image_url', $public_url );
 
+    // Write _thumbnail_id to the database so SearchIQ can find it even if it
+    // bypasses WordPress meta filters and queries wp_postmeta directly.
+    // Value is the post's own ID; wp_get_attachment_image_src + wp_get_attachment_url
+    // filters in cpt.php map this back to the real Supabase URL.
+    update_post_meta( $post_id, '_thumbnail_id', $post_id );
+
     return rest_ensure_response( [
         'ok'       => true,
         'post_id'  => $post_id,
