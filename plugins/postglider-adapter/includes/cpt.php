@@ -23,6 +23,35 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 add_action( 'init', function () {
 
+    // pg_artist: flat taxonomy for named artists / stylists. SearchIQ Author-facet equivalent.
+    register_taxonomy( 'pg_artist', 'pg_gallery_image', [
+        'labels'            => [
+            'name'          => esc_html__( 'Artists',  'postglider-adapter' ),
+            'singular_name' => esc_html__( 'Artist',   'postglider-adapter' ),
+        ],
+        'hierarchical'      => false,
+        'public'            => true,
+        'show_in_rest'      => true,
+        'show_ui'           => false,
+        'show_tagcloud'     => false,
+        'rewrite'           => [ 'slug' => 'artist', 'with_front' => false ],
+    ] );
+
+    // pg_content_type: hierarchical taxonomy for content categories.
+    // Terms: portrait, workspace, before-after, product-shot, team-culture, promotional, client-spotlight
+    register_taxonomy( 'pg_content_type', 'pg_gallery_image', [
+        'labels'            => [
+            'name'          => esc_html__( 'Content Types', 'postglider-adapter' ),
+            'singular_name' => esc_html__( 'Content Type',  'postglider-adapter' ),
+        ],
+        'hierarchical'      => true,
+        'public'            => true,
+        'show_in_rest'      => true,
+        'show_ui'           => false,
+        'show_tagcloud'     => false,
+        'rewrite'           => [ 'slug' => 'content-type', 'with_front' => false ],
+    ] );
+
     register_post_type( 'pg_gallery_image', [
         'labels' => [
             'name'          => esc_html__( 'Gallery Images',       'postglider-adapter' ),
@@ -37,7 +66,7 @@ add_action( 'init', function () {
         'show_in_admin_bar' => false,
         'show_ui'           => false,
         'supports'          => [ 'title', 'editor', 'excerpt', 'thumbnail' ],
-        'taxonomies'        => [ 'post_tag' ],
+        'taxonomies'        => [ 'post_tag', 'pg_artist', 'pg_content_type' ],
         'rewrite'           => [ 'slug' => 'gallery-image', 'with_front' => false ],
         'capability_type'   => 'post',
         'map_meta_cap'      => true,

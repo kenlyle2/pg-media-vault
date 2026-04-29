@@ -46,6 +46,18 @@ add_action( 'rest_api_init', function () {
                 'default'           => '',
                 'sanitize_callback' => 'sanitize_text_field',
             ],
+            'artist' => [
+                'required'          => false,
+                'type'              => 'string',
+                'default'           => '',
+                'sanitize_callback' => 'sanitize_text_field',
+            ],
+            'content_type' => [
+                'required'          => false,
+                'type'              => 'string',
+                'default'           => '',
+                'sanitize_callback' => 'sanitize_text_field',
+            ],
         ],
     ] );
 } );
@@ -66,13 +78,15 @@ function pg_sync_image_auth( WP_REST_Request $request ): bool {
 }
 
 function pg_sync_image_handler( WP_REST_Request $request ) {
-    $image_id    = $request->get_param( 'image_id' );
-    $public_url  = $request->get_param( 'public_url' );
-    $tags        = array_values( array_filter( array_map(
+    $image_id     = $request->get_param( 'image_id' );
+    $public_url   = $request->get_param( 'public_url' );
+    $tags         = array_values( array_filter( array_map(
         'sanitize_text_field',
         (array) $request->get_param( 'tags' )
     ) ) );
-    $description = (string) $request->get_param( 'description' );
+    $description  = (string) $request->get_param( 'description' );
+    $artist       = (string) $request->get_param( 'artist' );
+    $content_type = (string) $request->get_param( 'content_type' );
 
     // Title: first 8 tags, title-cased, joined with " · "
     $title_tags = array_map( 'ucwords', array_slice( $tags, 0, 8 ) );
@@ -124,9 +138,19 @@ function pg_sync_image_handler( WP_REST_Request $request ) {
         );
     }
 
-    // Set WP tags (taxonomy terms) — SearchIQ uses these for facets + indexing
+    // Tags → post_tag: SearchIQ Tag facet
     if ( $tags ) {
         wp_set_post_tags( $post_id, $tags, false );
+    }
+
+    // Artist → pg_artist: SearchIQ Author-equivalent facet
+    if ( $artist ) {
+        wp_set_object_terms( $post_id, [ $artist ], 'pg_artist' );
+    }
+
+    // Content type → pg_content_type: SearchIQ Category-equivalent facet
+    if ( $content_type ) {
+        wp_set_object_terms( $post_id, [ $content_type ], 'pg_content_type' );
     }
 
     // Store Supabase URL in post meta — used by the featured image faking filter in cpt.php
