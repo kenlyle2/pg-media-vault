@@ -56,6 +56,47 @@ function pg_settings_page() {
             </p>
             <?php submit_button( esc_html__( 'Save Settings', 'postglider-adapter' ), 'primary', 'pg_save' ); ?>
         </form>
+
+        <hr>
+        <h2><?php esc_html_e( 'Update Check', 'postglider-adapter' ); ?></h2>
+        <?php
+        if ( isset( $_GET['pg_check_now'] ) && current_user_can( 'manage_network' ) ) {
+            delete_site_transient( POSTGLIDER_ADAPTER_METADATA_TRANSIENT );
+            $meta = pg_fetch_metadata();
+            if ( $meta ) {
+                echo '<div class="updated"><p>';
+                printf(
+                    esc_html__( 'Metadata fetched successfully. Latest version: %s. Installed: %s.', 'postglider-adapter' ),
+                    '<strong>' . esc_html( $meta->version ) . '</strong>',
+                    '<strong>' . esc_html( POSTGLIDER_ADAPTER_VERSION ) . '</strong>'
+                );
+                echo '</p></div>';
+            } else {
+                $err = get_site_option( 'pg_adapter_update_error', 'Unknown error' );
+                echo '<div class="error"><p>';
+                printf( esc_html__( 'Metadata fetch FAILED: %s', 'postglider-adapter' ), '<strong>' . esc_html( $err ) . '</strong>' );
+                echo '</p></div>';
+            }
+        }
+
+        $last_error = get_site_option( 'pg_adapter_update_error' );
+        if ( $last_error ) {
+            echo '<div class="error"><p>';
+            printf( esc_html__( 'Last update check error: %s', 'postglider-adapter' ), '<strong>' . esc_html( $last_error ) . '</strong>' );
+            echo '</p></div>';
+        }
+
+        $check_url = add_query_arg( 'pg_check_now', '1', admin_url( 'options-general.php?page=postglider-settings' ) );
+        echo '<p>';
+        printf(
+            '<a href="%s" class="button">%s</a> &nbsp; <strong>%s</strong> %s',
+            esc_url( $check_url ),
+            esc_html__( 'Test Metadata Fetch', 'postglider-adapter' ),
+            esc_html__( 'Plugin file:', 'postglider-adapter' ),
+            '<code>' . esc_html( POSTGLIDER_ADAPTER_PLUGIN_FILE ) . '</code>'
+        );
+        echo '</p>';
+        ?>
     </div>
     <?php
 }
