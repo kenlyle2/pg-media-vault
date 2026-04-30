@@ -45,6 +45,26 @@ add_action( 'rest_api_init', function () {
         ],
     ] );
 
+    register_rest_route( 'postglider/v1', '/delete-site', [
+        'methods'             => 'DELETE',
+        'callback'            => 'pg_delete_site_handler',
+        'permission_callback' => function () {
+            return current_user_can( 'manage_network' );
+        },
+        'args' => [
+            'blog_id' => [
+                'required'          => false,
+                'type'              => 'integer',
+                'sanitize_callback' => 'absint',
+            ],
+            'domain' => [
+                'required'          => false,
+                'type'              => 'string',
+                'sanitize_callback' => 'sanitize_text_field',
+            ],
+        ],
+    ] );
+
     register_rest_route( 'postglider/v1', '/configure-site', [
         'methods'             => 'POST',
         'callback'            => 'pg_configure_site_handler',
@@ -80,6 +100,33 @@ add_action( 'rest_api_init', function () {
         ],
     ] );
 } );
+
+function pg_delete_site_handler( WP_REST_Request $request ) {
+    $blog_id = $request->get_param( 'blog_id' );
+    $domain  = $request->get_param( 'domain' );
+
+    if ( ! $blog_id && $domain ) {
+        $blog_id = get_blog_id_from_url( $domain, '/' );
+    }
+
+    if ( ! $blog_id ) {
+        return new WP_Error( 'pg_missing_site', 'Provide blog_id or domain.', [ 'status' => 400 ] );
+    }
+
+    // If already gone, treat as success rather than error
+    if ( ! get_blog_details( (int) $blog_id ) ) {
+        return rest_ensure_response( [ 'ok' => true, 'deleted_blog_id' => (int) $blog_id, 'already_gone' => true ] );
+    }
+
+    // Safety: never delete the main site
+    if ( (int) $blog_id === (int) get_main_site_id() ) {
+        return new WP_Error( 'pg_main_site', 'Cannot delete the main site.', [ 'status' => 403 ] );
+    }
+
+    wpmu_delete_blog( (int) $blog_id, true ); // true = drop tables
+
+    return rest_ensure_response( [ 'ok' => true, 'deleted_blog_id' => (int) $blog_id ] );
+}
 
 function pg_create_site_handler( WP_REST_Request $request ) {
     $domain = $request->get_param( 'domain' );
