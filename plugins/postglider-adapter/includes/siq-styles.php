@@ -9,6 +9,29 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
+/**
+ * When the gallery page loads without a search query, redirect to SearchIQ's
+ * configured results page with ?q=* so all images are visible immediately.
+ * The redirect does not fire when the user has already entered a query (i.e.
+ * when SearchIQ itself bounces the user back to the gallery URL with ?q=).
+ */
+add_action( 'template_redirect', function () {
+    if ( ! is_page( 'gallery' ) ) return;
+    if ( isset( $_GET['q'] ) ) return;         // already has a query, leave it alone
+
+    $siq_page = get_option( '_siq_custom_search_page' );
+    if ( ! $siq_page ) return;
+
+    $url = is_numeric( $siq_page )
+        ? get_permalink( (int) $siq_page )
+        : esc_url_raw( $siq_page );
+
+    if ( ! $url ) return;
+
+    wp_safe_redirect( add_query_arg( 'q', '*', $url ) );
+    exit;
+} );
+
 add_action( 'wp_head', function () {
     ?>
 <style id="pg-siq-styles">
