@@ -5,7 +5,7 @@
  * POST /wp-json/postglider/v1/configure-site
  * Auth: WordPress Application Password (super admin required)
  * Body: { "blog_id": 4, "supabase_url": "https://...", "gallery_token": "pg_gallery_...",
- *         "searchiq_api_key": "a4a0db93..." }
+ *         "searchiq_api_key": "your_searchiq_key_here" }
  *
  * Called by PostGlider's provisionWpSubsite() immediately after site creation
  * to wire the gallery token to the new subsite without manual admin steps.
