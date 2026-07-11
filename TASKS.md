@@ -2,22 +2,15 @@
 
 ---
 
-## 🔴 Seed `_siq_image_custom_field` in `pg_configure_searchiq()` — prevents the broken-thumbnail bug for every future client (2026-07-10)
+## ~~Seed `_siq_image_custom_field` for every new client~~ ✅ Fixed (2026-07-10, `decisions.md` D-2026-07-10g)
 
-Root-caused and fixed live for Stay True Tattoo (`decisions.md` D-2026-07-10e): SearchIQ's cloud
-index had `null` `image`/`thumbnailSmallUrl`/`thumbnailLargeUrl` fields for every
-`pg_gallery_image` post, causing broken/placeholder thumbnails in search results. The documented
-fix (`documentationai-Docs/admin/searchiq.mdx` §Per-client SearchIQ setup) is to set SearchIQ's
-**Image Custom Field** to `_pg_image_url` for the `pg_gallery_image` post type — this was applied
-manually/ad-hoc for Stay True Tattoo at some point, but `pg_configure_searchiq()`
-(`plugins/postglider-adapter/includes/network-api.php`, called from `configure-site`) **never
-sets this option**, so it's not part of the automated onboarding seed.
-
-**Fix:** add `$s->postTypesForSearchSelection` / equivalent `_siq_image_custom_field` seeding to
-`pg_configure_searchiq()`'s `$s` settings object, matching the working value confirmed live:
-`pg_gallery_image:_pg_image_url` (plus the other post types SearchIQ tracks — see the live
-`wp option get _siq_image_custom_field` output in D-2026-07-10e for the full comma-separated
-format). Verify against a fresh test subsite provisioning end-to-end, not just a settings diff.
+Superseded the originally-planned approach (seeding `pg_configure_searchiq()`'s `$s` object
+directly — turned out `_siq_raw_settings` is a write-only UI pre-fill, not what the plugin
+actually reads). Shipped instead as a new endpoint, `POST /wp-json/postglider/v1/searchiq-install`
+(`includes/searchiq-install.php`, v0.4.5), which sets the *real* flat options
+(`_siq_postTypesForSearchSelection`, `_siq_image_custom_field`), registers the SearchIQ engine,
+syncs settings to the cloud, and swaps the Gallery page shortcode — all in one call, on the
+target subsite itself. Verified live end-to-end against a clean test subsite.
 
 ---
 
@@ -39,21 +32,18 @@ dead filter and its misleading docblock. See D-2026-07-10e for the full investig
 
 ---
 
-## 🔴 Wire `searchiq_api_key` through onboarding — SearchIQ is never configured for new clients today (2026-07-10)
+## ~~Wire `searchiq_api_key` through onboarding~~ ✅ Fixed (2026-07-10, `decisions.md` D-2026-07-10g)
 
-`postglider-auto/lib/actions/wpActions.ts`'s `callWpConfigureSite()` never sends a
-`searchiq_api_key` param to `POST /wp-json/postglider/v1/configure-site` — so
-`pg_configure_searchiq()` never runs during real onboarding, and every new subsite gets
-provisioned with `[pg_gallery]` only (no SearchIQ, no facets, no autocomplete). Confirmed via
-`pg_setup_gallery_page()`'s own conditional: `$siq_key ? "[searchiq]\n\n[pg_gallery]" :
-'[pg_gallery]'`. Stay True Tattoo's SearchIQ setup happened outside this automated path.
+`postglider-auto`'s `provisionWpSubsite()` now calls the new `searchiq-install` endpoint (see
+item above) right after `configure-site`, using a single shared `SEARCHIQ_API_KEY` env var —
+SearchIQ auto-assigns each subsite its own distinct `engineKey` on registration, confirming the
+single-shared-key model works as expected.
 
-This blocks Ken's stated goal: every new client's subsite should get a working faceted gallery
-"just like the stay-true one," automatically, at onboarding. See matching entry in
-`postglider-auto/TASKS.md` for the app-side half of this fix (where does the `searchiq_api_key`
-come from per client — a single shared key across the two merged AppSumo lifetime accounts, one
-engine per subsite? needs research into how SearchIQ scopes engines to a key before this can be
-wired up correctly).
+**Still open — Phase 2:** Ken's stated architecture puts the *caller* of this endpoint in
+`pg-admin` (admin processes live there, alongside crons), not directly in `postglider-auto`.
+Deferred until `pg-admin`'s first Cloud Run infra (currently being built in a separate effort for
+a GMB-photo cron, see `pg-admin/CLAUDE.md` Tenants) lands, so this doesn't ship a second,
+inconsistent Cloud Run pattern. The WordPress-side endpoint doesn't change for this move.
 
 ---
 
