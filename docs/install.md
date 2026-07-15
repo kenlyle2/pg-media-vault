@@ -8,7 +8,7 @@
 
 ## 1. Deploy the Supabase edge function
 
-From the `postglider-wp` repo root:
+From the `pg-media-vault` repo root:
 
 ```bash
 supabase functions deploy gallery-search --project-ref <your-project-ref>
